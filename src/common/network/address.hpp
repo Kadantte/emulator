@@ -26,80 +26,92 @@
 #endif
 
 #include <string>
+#include <string_view>
 #include <vector>
 #include <optional>
 
 #ifdef _WIN32
+using socklen_t = int;
 #pragma comment(lib, "ws2_32.lib")
 #endif
 
 namespace network
 {
-	void initialize_wsa();
+    void initialize_wsa();
 
-	class address
-	{
-	public:
-		address();
-		address(const std::string& addr, const std::optional<int>& family = {});
-		address(const sockaddr_in& addr);
-		address(const sockaddr_in6& addr);
-		address(const sockaddr* addr, int length);
+    class address
+    {
+      public:
+        address();
+        address(std::string_view addr, const std::optional<int>& family = std::nullopt);
+        address(const sockaddr_in& addr);
+        address(const sockaddr_in6& addr);
+        address(const sockaddr* addr, socklen_t length);
 
-		void set_ipv4(uint32_t ip);
-		void set_ipv4(const in_addr& addr);
-		void set_ipv6(const in6_addr& addr);
-		void set_address(const sockaddr* addr, int length);
+        address(const address&) = default;
+        address(address&&) noexcept = default;
 
-		void set_port(unsigned short port);
-		[[nodiscard]] unsigned short get_port() const;
+        address& operator=(const address&) = default;
+        address& operator=(address&&) noexcept = default;
 
-		sockaddr& get_addr();
-		sockaddr_in& get_in_addr();
-		sockaddr_in6& get_in6_addr();
+        ~address() = default;
 
-		const sockaddr& get_addr() const;
-		const sockaddr_in& get_in_addr() const;
-		const sockaddr_in6& get_in6_addr() const;
+        void set_ipv4(uint32_t ip);
+        void set_ipv4(const in_addr& addr);
+        void set_ipv6(const in6_addr& addr);
+        void set_address(const sockaddr* addr, socklen_t length);
 
-		int get_size() const;
-		int get_max_size() const;
+        void set_port(unsigned short port);
+        [[nodiscard]] unsigned short get_port() const;
 
-		bool is_ipv4() const;
-		bool is_ipv6() const;
-		bool is_supported() const;
+        sockaddr& get_addr();
+        sockaddr_in& get_in_addr();
+        sockaddr_in6& get_in6_addr();
 
-		[[nodiscard]] bool is_local() const;
-		[[nodiscard]] std::string to_string() const;
+        const sockaddr& get_addr() const;
+        const sockaddr_in& get_in_addr() const;
+        const sockaddr_in6& get_in6_addr() const;
 
-		bool operator==(const address& obj) const;
+        socklen_t get_size() const;
+        socklen_t get_max_size() const;
 
-		bool operator!=(const address& obj) const
-		{
-			return !(*this == obj);
-		}
+        int get_family() const;
 
-		static std::vector<address> resolve_multiple(const std::string& hostname);
+        bool is_ipv4() const;
+        bool is_ipv6() const;
+        bool is_supported() const;
 
-	private:
-		union
-		{
-			sockaddr address_;
-			sockaddr_in address4_;
-			sockaddr_in6 address6_;
-			sockaddr_storage storage_;
-		};
+        [[nodiscard]] bool is_local() const;
+        [[nodiscard]] std::string to_string() const;
 
-		void parse(std::string addr, const std::optional<int>& family = {});
-		void resolve(const std::string& hostname, const std::optional<int>& family = {});
-	};
+        bool operator==(const address& obj) const;
+
+        bool operator!=(const address& obj) const
+        {
+            return !(*this == obj);
+        }
+
+        static std::vector<address> resolve_multiple(const std::string& hostname);
+
+      private:
+        union
+        {
+            sockaddr address_;
+            sockaddr_in address4_;
+            sockaddr_in6 address6_;
+            sockaddr_storage storage_;
+        };
+
+        void parse(std::string_view addr, const std::optional<int>& family = {});
+        void resolve(const std::string& hostname, const std::optional<int>& family = {});
+    };
 }
 
 namespace std
 {
-	template <>
-	struct hash<network::address>
-	{
-		std::size_t operator()(const network::address& a) const noexcept;
-	};
+    template <>
+    struct hash<network::address>
+    {
+        std::size_t operator()(const network::address& a) const noexcept;
+    };
 }

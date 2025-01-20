@@ -4,66 +4,73 @@
 
 #include <span>
 #include <chrono>
+#include <optional>
 
 #ifdef _WIN32
-using socklen_t = int;
+using send_size = int;
 #define GET_SOCKET_ERROR() (WSAGetLastError())
-#define poll WSAPoll
-#define SOCK_WOULDBLOCK WSAEWOULDBLOCK
+#define poll               WSAPoll
+#define SERR(x)            (WSA##x)
+#define SHUT_RDWR          SD_BOTH
 #else
 using SOCKET = int;
-#define INVALID_SOCKET  (SOCKET)(~0)
-#define SOCKET_ERROR            (-1)
+using send_size = size_t;
+#define INVALID_SOCKET     (SOCKET)(~0)
+#define SOCKET_ERROR       (-1)
 #define GET_SOCKET_ERROR() (errno)
-#define closesocket close
-#define SOCK_WOULDBLOCK EWOULDBLOCK
+#define closesocket        close
+#define SERR(x)            (x)
 #endif
 
 namespace network
 {
-	class socket
-	{
-	public:
-		socket() = default;
+    class socket
+    {
+      public:
+        socket() = default;
 
-		socket(int af);
-		~socket();
+        socket(SOCKET s);
 
-		socket(const socket& obj) = delete;
-		socket& operator=(const socket& obj) = delete;
+        socket(int af, int type, int protocol);
+        virtual ~socket();
 
-		socket(socket&& obj) noexcept;
-		socket& operator=(socket&& obj) noexcept;
+        socket(const socket& obj) = delete;
+        socket& operator=(const socket& obj) = delete;
 
-		bool bind_port(const address& target);
+        socket(socket&& obj) noexcept;
+        socket& operator=(socket&& obj) noexcept;
 
-		[[maybe_unused]] bool send(const address& target, const void* data, size_t size) const;
-		[[maybe_unused]] bool send(const address& target, const std::string& data) const;
-		bool receive(address& source, std::string& data) const;
+        operator bool() const;
 
-		bool set_blocking(bool blocking);
-		static bool set_blocking(SOCKET s, bool blocking);
+        bool is_valid() const;
 
-		static constexpr bool socket_is_ready = true;
-		bool sleep(std::chrono::milliseconds timeout) const;
-		bool sleep_until(std::chrono::high_resolution_clock::time_point time_point) const;
+        bool bind(const address& target);
 
-		SOCKET get_socket() const;
-		uint16_t get_port() const;
+        bool set_blocking(bool blocking);
+        static bool set_blocking(SOCKET s, bool blocking);
 
-		int get_address_family() const;
+        static constexpr bool socket_is_ready = true;
+        bool sleep(std::chrono::milliseconds timeout, bool in_poll = true) const;
+        bool sleep_until(std::chrono::high_resolution_clock::time_point time_point, bool in_poll = true) const;
 
-		static bool sleep_sockets(const std::span<const socket*>& sockets, std::chrono::milliseconds timeout);
-		static bool sleep_sockets_until(const std::span<const socket*>& sockets,
-		                                std::chrono::high_resolution_clock::time_point time_point);
+        SOCKET get_socket() const;
+        uint16_t get_port() const;
+        std::optional<address> get_name() const;
 
-		static bool is_socket_ready(SOCKET s, bool in_poll);
+        int get_address_family() const;
 
-	private:
-		int address_family_{AF_UNSPEC};
-		uint16_t port_ = 0;
-		SOCKET socket_ = INVALID_SOCKET;
+        bool is_ready(bool in_poll) const;
 
-		void release();
-	};
+        static bool sleep_sockets(const std::span<const socket*>& sockets, std::chrono::milliseconds timeout,
+                                  bool in_poll);
+        static bool sleep_sockets_until(const std::span<const socket*>& sockets,
+                                        std::chrono::high_resolution_clock::time_point time_point, bool in_poll);
+
+        static bool is_socket_ready(SOCKET s, bool in_poll);
+
+        void close();
+
+      private:
+        SOCKET socket_ = INVALID_SOCKET;
+    };
 }

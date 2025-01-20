@@ -2,44 +2,44 @@
 
 namespace test
 {
-	TEST(TimeTest, SystemTimeIsAccurate)
-	{
-		std::string output_buffer{};
+    TEST(TimeTest, SystemTimeIsAccurate)
+    {
+        std::string output_buffer{};
 
-		emulator_settings settings{
-			.arguments = {L"-time"},
-			.stdout_callback = [&output_buffer](const std::string_view data)
-			{
-				output_buffer.append(data);
-			},
-			.disable_logging = true,
-			.use_relative_time = false,
-		};
+        emulator_callbacks callbacks{
+            .stdout_callback = [&output_buffer](const std::string_view data) { output_buffer.append(data); },
+        };
 
-		auto emu = create_sample_emulator(settings);
-		emu.start();
+        const emulator_settings settings{
+            .arguments = {u"-time"},
+            .disable_logging = true,
+            .use_relative_time = false,
+        };
 
-		constexpr auto prefix = "Time: "sv;
+        auto emu = create_sample_emulator(settings, callbacks);
+        emu.start();
 
-		ASSERT_TERMINATED_SUCCESSFULLY(emu);
-		ASSERT_TRUE(output_buffer.starts_with(prefix));
+        constexpr auto prefix = "Time: "sv;
 
-		output_buffer = output_buffer.substr(prefix.size());
-		while (!output_buffer.empty() && (output_buffer.back() == '\n' || output_buffer.back() == '\r'))
-		{
-			output_buffer.pop_back();
-		}
+        ASSERT_TERMINATED_SUCCESSFULLY(emu);
+        ASSERT_TRUE(output_buffer.starts_with(prefix));
 
-		const auto time = strtoll(output_buffer.c_str(), nullptr, 10);
+        output_buffer = output_buffer.substr(prefix.size());
+        while (!output_buffer.empty() && (output_buffer.back() == '\n' || output_buffer.back() == '\r'))
+        {
+            output_buffer.pop_back();
+        }
 
-		using time_point = std::chrono::system_clock::time_point;
+        const auto time = strtoll(output_buffer.c_str(), nullptr, 10);
 
-		const time_point::duration time_duration(time);
-		const time_point tp(time_duration);
+        using time_point = std::chrono::system_clock::time_point;
 
-		const auto now = std::chrono::system_clock::now();
-		const auto diff = now - tp;
+        const time_point::duration time_duration(time);
+        const time_point tp(time_duration);
 
-		ASSERT_LE(diff, std::chrono::hours(1));
-	}
+        const auto now = std::chrono::system_clock::now();
+        const auto diff = now - tp;
+
+        ASSERT_LE(diff, std::chrono::hours(1));
+    }
 }

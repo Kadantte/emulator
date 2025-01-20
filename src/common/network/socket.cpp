@@ -1,4 +1,5 @@
 #include "socket.hpp"
+#include "address.hpp"
 
 #include <thread>
 
@@ -6,226 +7,237 @@ using namespace std::literals;
 
 namespace network
 {
-	socket::socket(const int af)
-		: address_family_(af)
-	{
-		initialize_wsa();
-		this->socket_ = ::socket(af, SOCK_DGRAM, IPPROTO_UDP);
+    socket::socket(const SOCKET s)
+        : socket_(s)
+    {
+    }
 
-		if (af == AF_INET6)
-		{
-			int i = 1;
-			setsockopt(this->socket_, IPPROTO_IPV6, IPV6_V6ONLY, reinterpret_cast<char*>(&i),
-			           static_cast<int>(sizeof(i)));
-		}
-	}
+    socket::socket(const int af, const int type, const int protocol)
+    {
+        initialize_wsa();
+        this->socket_ = ::socket(af, type, protocol);
 
-	socket::~socket()
-	{
-		this->release();
-	}
+        if (af == AF_INET6)
+        {
+            int i = 1;
+            setsockopt(this->socket_, IPPROTO_IPV6, IPV6_V6ONLY, reinterpret_cast<char*>(&i),
+                       static_cast<int>(sizeof(i)));
+        }
 
-	socket::socket(socket&& obj) noexcept
-	{
-		this->operator=(std::move(obj));
-	}
+        int optval = 1;
+        setsockopt(this->socket_, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<char*>(&optval),
+                   static_cast<int>(sizeof(optval)));
+    }
 
-	socket& socket::operator=(socket&& obj) noexcept
-	{
-		if (this != &obj)
-		{
-			this->release();
-			this->socket_ = obj.socket_;
-			this->port_ = obj.port_;
-			this->address_family_ = obj.address_family_;
+    socket::~socket()
+    {
+        this->close();
+    }
 
-			obj.socket_ = INVALID_SOCKET;
-			obj.address_family_ = AF_UNSPEC;
-		}
+    socket::socket(socket&& obj) noexcept
+    {
+        this->operator=(std::move(obj));
+    }
 
-		return *this;
-	}
+    socket& socket::operator=(socket&& obj) noexcept
+    {
+        if (this != &obj)
+        {
+            this->close();
+            this->socket_ = obj.socket_;
 
-	void socket::release()
-	{
-		if (this->socket_ != INVALID_SOCKET)
-		{
-			closesocket(this->socket_);
-			this->socket_ = INVALID_SOCKET;
-		}
-	}
+            obj.socket_ = INVALID_SOCKET;
+        }
 
-	bool socket::bind_port(const address& target)
-	{
-		const auto result = bind(this->socket_, &target.get_addr(), target.get_size()) == 0;
-		if (result)
-		{
-			this->port_ = target.get_port();
-		}
+        return *this;
+    }
 
-		return result;
-	}
+    socket::operator bool() const
+    {
+        return this->is_valid();
+    }
 
-	bool socket::send(const address& target, const void* data, const size_t size) const
-	{
-		const int res = sendto(this->socket_, static_cast<const char*>(data), static_cast<int>(size), 0,
-		                       &target.get_addr(),
-		                       target.get_size());
-		return res == static_cast<int>(size);
-	}
+    bool socket::is_valid() const
+    {
+        return this->socket_ != INVALID_SOCKET;
+    }
 
-	bool socket::send(const address& target, const std::string& data) const
-	{
-		return this->send(target, data.data(), data.size());
-	}
+    void socket::close()
+    {
+        if (this->socket_ != INVALID_SOCKET)
+        {
+            ::closesocket(this->socket_);
+            this->socket_ = INVALID_SOCKET;
+        }
+    }
 
-	bool socket::receive(address& source, std::string& data) const
-	{
-		char buffer[0x2000];
-		socklen_t len = source.get_max_size();
+    bool socket::bind(const address& target)
+    {
+        return ::bind(this->socket_, &target.get_addr(), target.get_size()) == 0;
+    }
 
-		const auto result = recvfrom(this->socket_, buffer, static_cast<int>(sizeof(buffer)), 0, &source.get_addr(),
-		                             &len);
-		if (result == SOCKET_ERROR)
-		{
-			return false;
-		}
+    bool socket::set_blocking(const bool blocking)
+    {
+        return socket::set_blocking(this->socket_, blocking);
+    }
 
-		data.assign(buffer, buffer + result);
-		return true;
-	}
-
-	bool socket::set_blocking(const bool blocking)
-	{
-		return socket::set_blocking(this->socket_, blocking);
-	}
-
-	bool socket::set_blocking(SOCKET s, const bool blocking)
-	{
+    bool socket::set_blocking(SOCKET s, const bool blocking)
+    {
 #ifdef _WIN32
-		unsigned long mode = blocking ? 0 : 1;
-		return ioctlsocket(s, FIONBIO, &mode) == 0;
+        unsigned long mode = blocking ? 0 : 1;
+        return ioctlsocket(s, FIONBIO, &mode) == 0;
 #else
-		int flags = fcntl(s, F_GETFL, 0);
-		if (flags == -1) return false;
-		flags = blocking ? (flags & ~O_NONBLOCK) : (flags | O_NONBLOCK);
-		return fcntl(s, F_SETFL, flags) == 0;
+        int flags = fcntl(s, F_GETFL, 0);
+        if (flags == -1)
+            return false;
+        flags = blocking ? (flags & ~O_NONBLOCK) : (flags | O_NONBLOCK);
+        return fcntl(s, F_SETFL, flags) == 0;
 #endif
-	}
+    }
 
-	bool socket::sleep(const std::chrono::milliseconds timeout) const
-	{
-		/*fd_set fdr;
-		FD_ZERO(&fdr);
-		FD_SET(this->socket_, &fdr);
+    bool socket::sleep(const std::chrono::milliseconds timeout, const bool in_poll) const
+    {
+        /*fd_set fdr;
+        FD_ZERO(&fdr);
+        FD_SET(this->socket_, &fdr);
 
-		const auto msec = timeout.count();
+        const auto msec = timeout.count();
 
-		timeval tv{};
-		tv.tv_sec = static_cast<long>(msec / 1000ll);
-		tv.tv_usec = static_cast<long>((msec % 1000) * 1000);
+        timeval tv{};
+        tv.tv_sec = static_cast<long>(msec / 1000ll);
+        tv.tv_usec = static_cast<long>((msec % 1000) * 1000);
 
-		const auto retval = select(static_cast<int>(this->socket_) + 1, &fdr, nullptr, nullptr, &tv);
-		if (retval == SOCKET_ERROR)
-		{
-			std::this_thread::sleep_for(1ms);
-			return socket_is_ready;
-		}
+        const auto retval = select(static_cast<int>(this->socket_) + 1, &fdr, nullptr, nullptr, &tv);
+        if (retval == SOCKET_ERROR)
+        {
+            std::this_thread::sleep_for(1ms);
+            return socket_is_ready;
+        }
 
-		if (retval > 0)
-		{
-			return socket_is_ready;
-		}
+        if (retval > 0)
+        {
+            return socket_is_ready;
+        }
 
-		return !socket_is_ready;*/
+        return !socket_is_ready;*/
 
-		std::vector<const socket*> sockets{};
-		sockets.push_back(this);
+        std::vector<const socket*> sockets{};
+        sockets.push_back(this);
 
-		return sleep_sockets(sockets, timeout);
-	}
+        return sleep_sockets(sockets, timeout, in_poll);
+    }
 
-	bool socket::sleep_until(const std::chrono::high_resolution_clock::time_point time_point) const
-	{
-		const auto duration = time_point - std::chrono::high_resolution_clock::now();
-		return this->sleep(std::chrono::duration_cast<std::chrono::milliseconds>(duration));
-	}
+    bool socket::sleep_until(const std::chrono::high_resolution_clock::time_point time_point, const bool in_poll) const
+    {
+        const auto duration = time_point - std::chrono::high_resolution_clock::now();
+        return this->sleep(std::chrono::duration_cast<std::chrono::milliseconds>(duration), in_poll);
+    }
 
-	SOCKET socket::get_socket() const
-	{
-		return this->socket_;
-	}
+    SOCKET socket::get_socket() const
+    {
+        return this->socket_;
+    }
 
-	uint16_t socket::get_port() const
-	{
-		return this->port_;
-	}
+    std::optional<address> socket::get_name() const
+    {
+        address a{};
+        auto len = a.get_max_size();
+        if (getsockname(this->socket_, &a.get_addr(), &len) == SOCKET_ERROR)
+        {
+            return std::nullopt;
+        }
 
-	int socket::get_address_family() const
-	{
-		return this->address_family_;
-	}
+        return a;
+    }
 
-	bool socket::sleep_sockets(const std::span<const socket*>& sockets, const std::chrono::milliseconds timeout)
-	{
-		std::vector<pollfd> pfds{};
-		pfds.resize(sockets.size());
+    uint16_t socket::get_port() const
+    {
+        const auto address = this->get_name();
+        if (!address)
+        {
+            return 0;
+        }
 
-		for (size_t i = 0; i < sockets.size(); ++i)
-		{
-			auto& pfd = pfds.at(i);
-			const auto& socket = sockets[i];
+        return address->get_port();
+    }
 
-			pfd.fd = socket->get_socket();
-			pfd.events = POLLIN;
-			pfd.revents = 0;
-		}
+    int socket::get_address_family() const
+    {
+        const auto address = this->get_name();
+        if (!address)
+        {
+            return AF_UNSPEC;
+        }
 
-		const auto retval = poll(pfds.data(), static_cast<uint32_t>(pfds.size()),
-		                         static_cast<int>(timeout.count()));
+        return address->get_addr().sa_family;
+    }
 
-		if (retval == SOCKET_ERROR)
-		{
-			std::this_thread::sleep_for(1ms);
-			return socket_is_ready;
-		}
+    bool socket::is_ready(const bool in_poll) const
+    {
+        return this->is_valid() && is_socket_ready(this->socket_, in_poll);
+    }
 
-		if (retval > 0)
-		{
-			return socket_is_ready;
-		}
+    bool socket::sleep_sockets(const std::span<const socket*>& sockets, const std::chrono::milliseconds timeout,
+                               const bool in_poll)
+    {
+        std::vector<pollfd> pfds{};
+        pfds.resize(sockets.size());
 
-		return !socket_is_ready;
-	}
+        for (size_t i = 0; i < sockets.size(); ++i)
+        {
+            auto& pfd = pfds.at(i);
+            const auto& socket = sockets[i];
 
-	bool socket::is_socket_ready(const SOCKET s, const bool in_poll)
-	{
-		pollfd pfd{};
+            pfd.fd = socket->get_socket();
+            pfd.events = in_poll ? POLLIN : POLLOUT;
+            pfd.revents = 0;
+        }
 
-		pfd.fd = s;
-		pfd.events = in_poll ? POLLIN : POLLOUT;
-		pfd.revents = 0;
+        const auto retval = poll(pfds.data(), static_cast<uint32_t>(pfds.size()), static_cast<int>(timeout.count()));
 
-		const auto retval = poll(&pfd, 1, 0);
+        if (retval == SOCKET_ERROR)
+        {
+            std::this_thread::sleep_for(1ms);
+            return socket_is_ready;
+        }
 
-		if (retval == SOCKET_ERROR)
-		{
-			std::this_thread::sleep_for(1ms);
-			return socket_is_ready;
-		}
+        if (retval > 0)
+        {
+            return socket_is_ready;
+        }
 
-		if (retval > 0)
-		{
-			return socket_is_ready;
-		}
+        return !socket_is_ready;
+    }
 
-		return !socket_is_ready;
-	}
+    bool socket::is_socket_ready(const SOCKET s, const bool in_poll)
+    {
+        pollfd pfd{};
 
-	bool socket::sleep_sockets_until(const std::span<const socket*>& sockets,
-	                                 const std::chrono::high_resolution_clock::time_point time_point)
-	{
-		const auto duration = time_point - std::chrono::high_resolution_clock::now();
-		return sleep_sockets(sockets, std::chrono::duration_cast<std::chrono::milliseconds>(duration));
-	}
+        pfd.fd = s;
+        pfd.events = in_poll ? POLLIN : POLLOUT;
+        pfd.revents = 0;
+
+        const auto retval = poll(&pfd, 1, 0);
+
+        if (retval == SOCKET_ERROR)
+        {
+            std::this_thread::sleep_for(1ms);
+            return socket_is_ready;
+        }
+
+        if (retval > 0)
+        {
+            return socket_is_ready;
+        }
+
+        return !socket_is_ready;
+    }
+
+    bool socket::sleep_sockets_until(const std::span<const socket*>& sockets,
+                                     const std::chrono::high_resolution_clock::time_point time_point,
+                                     const bool in_poll)
+    {
+        const auto duration = time_point - std::chrono::high_resolution_clock::now();
+        return sleep_sockets(sockets, std::chrono::duration_cast<std::chrono::milliseconds>(duration), in_poll);
+    }
 }

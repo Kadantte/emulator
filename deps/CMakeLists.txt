@@ -1,7 +1,6 @@
 set(UNICORN_ARCH "x86" CACHE STRING "")
 
 add_subdirectory(unicorn)
-add_subdirectory(phnt)
 
 ##########################################
 
@@ -12,5 +11,5 @@ target_include_directories(reflect INTERFACE
 
 ##########################################
 
-include(mini-gdbstub.cmake)
 include(googletest.cmake)
+include(zlib.cmake)
